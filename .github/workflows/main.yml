@@ -1,4 +1,4 @@
-name: RDP-Ubuntu
+name: RDP-Ubuntu-TerminalOnly
 
 on:
   workflow_dispatch:
@@ -22,10 +22,16 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Update & Install Desktop + xRDP
+      - name: Install xRDP + Minimal Terminal Environment
         run: |
           sudo apt update
-          sudo apt install -y xfce4 xfce4-terminal xrdp
+          sudo apt install -y xrdp xorg dbus-x11 xfce4-terminal
+          
+          # Disable complete desktop session
+          echo "xfce4-terminal --fullscreen" | sudo tee /etc/skel/.xsession
+          sudo cp /etc/skel/.xsession /home/runner/.xsession
+          sudo chmod +x /home/runner/.xsession
+
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
 
@@ -33,10 +39,15 @@ jobs:
         run: |
           USERNAME="${{ github.event.inputs.rdp_username }}"
           PASSWORD="${{ github.event.inputs.rdp_password }}"
-          
+
           sudo useradd -m -s /bin/bash "$USERNAME"
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
           sudo usermod -aG sudo "$USERNAME"
+
+          # Make the terminal-only xsession for the new user
+          echo "xfce4-terminal --fullscreen" | sudo tee /home/$USERNAME/.xsession
+          sudo chmod +x /home/$USERNAME/.xsession
+          sudo chown $USERNAME:$USERNAME /home/$USERNAME/.xsession
 
           echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
@@ -53,16 +64,15 @@ jobs:
             --accept-routes \
             --ssh
 
-          # wait for IP assignment
           TS_IP=""
-          for i in {1..10}; do
+          for i in {1..15}; do
             TS_IP=$(tailscale ip -4)
             if [ ! -z "$TS_IP" ]; then break; fi
-            sleep 5
+            sleep 3
           done
 
           if [ -z "$TS_IP" ]; then
-            echo "❌ Failed to get Tailscale IP"
+            echo "❌ Tailscale failed to obtain IP"
             exit 1
           fi
 
@@ -71,7 +81,7 @@ jobs:
       - name: Show RDP Credentials
         run: |
           echo "===================="
-          echo " RDP ACCESS DETAILS"
+          echo "  RDP TERMINAL VPS   "
           echo "===================="
           echo "IP:      $TAILSCALE_IP"
           echo "User:    $RDP_USER"
@@ -81,6 +91,6 @@ jobs:
       - name: Keep Runner Alive
         run: |
           while true; do
-            echo "[$(date)] RDP Active..."
+            echo "[ $(date) ] VPS Terminal Active..."
             sleep 300
           done
