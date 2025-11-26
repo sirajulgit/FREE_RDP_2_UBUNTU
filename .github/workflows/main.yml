@@ -1,4 +1,4 @@
-name: Ubuntu-RDP
+name: Ubuntu-RDP-Terminal
 
 on:
   workflow_dispatch:
@@ -22,12 +22,11 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Update System
+      - name: Update system
         run: |
           sudo apt update -y
-          sudo apt install -y dbus-x11
 
-      - name: Create RDP User
+      - name: Create Terminal User
         run: |
           USERNAME="${{ github.event.inputs.rdp_username }}"
           PASSWORD="${{ github.event.inputs.rdp_password }}"
@@ -39,62 +38,55 @@ jobs:
           echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
 
-      - name: Install Desktop + XRDP
+      - name: Install XRDP (No Desktop)
         run: |
-          sudo apt install -y xfce4 xfce4-goodies xrdp
+          sudo apt install -y xrdp
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
 
-          # Fix login session
-          echo xfce4-session > /home/${{ github.event.inputs.rdp_username }}/.xsession
-          sudo chown ${{ github.event.inputs.rdp_username }}:${{ github.event.inputs.rdp_username }} \
-            /home/${{ github.event.inputs.rdp_username }}/.xsession
+          # Configure XRDP for terminal-only session
+          echo "#!/bin/bash" | sudo tee /etc/xrdp/startwm.sh
+          echo "export SHELL=/bin/bash" | sudo tee -a /etc/xrdp/startwm.sh
+          echo "exec /usr/bin/xterm" | sudo tee -a /etc/xrdp/startwm.sh
+          sudo chmod +x /etc/xrdp/startwm.sh
 
-          # Fix XRDP policy
-          sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config
-          echo "allowed_users=anybody" | sudo tee /etc/X11/Xwrapper.config
-
-      - name: Fix Firewall (Ubuntu runner does not use UFW but ensure open)
-        run: |
+          # Firewall allow RDP
           sudo iptables -I INPUT -p tcp --dport 3389 -j ACCEPT
 
-      - name: Install Tailscale
+      - name: Install XTerm (Terminal UI)
+        run: |
+          sudo apt install -y xterm
+
+      - name: Install & Start Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
-
-      - name: Start Tailscale
-        run: |
           sudo tailscale up \
             --authkey="${{ github.event.inputs.tailscale_authkey }}" \
-            --hostname="ubuntu-rdp-${GITHUB_RUN_ID}"
+            --hostname="ubuntu-terminal-rdp-${GITHUB_RUN_ID}"
 
           TSIP=$(tailscale ip -4)
           echo "TAILSCALE_IP=$TSIP" >> $GITHUB_ENV
 
-      - name: Confirm XRDP Running
+      - name: Verify XRDP
         run: |
-          if systemctl is-active --quiet xrdp; then
-            echo "XRDP running."
-          else
-            echo "XRDP NOT running!"
-            exit 1
-          fi
+          systemctl status xrdp --no-pager || true
+          ss -tln | grep 3389 || (echo "Error: XRDP not running" && exit 1)
 
-      - name: Confirm Tailscale IP
+      - name: Show Login Info
         run: |
-          echo "Tailscale IP = $TAILSCALE_IP"
-
-      - name: Keep Alive
-        run: |
-          echo "============================="
-          echo "  UBUNTU RDP CONNECTION INFO "
-          echo "============================="
+          echo ""
+          echo "======================================"
+          echo "     TERMINAL ONLY RDP LOGIN INFO     "
+          echo "======================================"
           echo "IP Address : $TAILSCALE_IP"
           echo "Username   : $RDP_USER"
           echo "Password   : $RDP_PASS"
-          echo "============================="
-          
+          echo "======================================"
+          echo ""
+
+      - name: Keep Alive
+        run: |
           while true; do
-            echo "RDP Running... $(date)"
+            echo "Terminal-RDP Active — $(date)"
             sleep 300
           done
