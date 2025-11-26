@@ -1,0 +1,86 @@
+name: RDP-Ubuntu
+
+on:
+  workflow_dispatch:
+    inputs:
+      rdp_username:
+        description: "Enter RDP Username"
+        required: true
+        type: string
+      rdp_password:
+        description: "Enter RDP Password"
+        required: true
+        type: string
+      tailscale_authkey:
+        description: "Enter Tailscale Auth Key"
+        required: true
+        type: string
+
+jobs:
+  rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Update & Install Desktop + xRDP
+        run: |
+          sudo apt update
+          sudo apt install -y xfce4 xfce4-terminal xrdp
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+
+      - name: Create RDP User
+        run: |
+          USERNAME="${{ github.event.inputs.rdp_username }}"
+          PASSWORD="${{ github.event.inputs.rdp_password }}"
+          
+          sudo useradd -m -s /bin/bash "$USERNAME"
+          echo "$USERNAME:$PASSWORD" | sudo chpasswd
+          sudo usermod -aG sudo "$USERNAME"
+
+          echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
+          echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Start Tailscale
+        run: |
+          sudo tailscale up \
+            --authkey="${{ github.event.inputs.tailscale_authkey }}" \
+            --hostname="ubuntu-runner-${GITHUB_RUN_ID}" \
+            --accept-routes \
+            --ssh
+
+          # wait for IP assignment
+          TS_IP=""
+          for i in {1..10}; do
+            TS_IP=$(tailscale ip -4)
+            if [ ! -z "$TS_IP" ]; then break; fi
+            sleep 5
+          done
+
+          if [ -z "$TS_IP" ]; then
+            echo "❌ Failed to get Tailscale IP"
+            exit 1
+          fi
+
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+
+      - name: Show RDP Credentials
+        run: |
+          echo "===================="
+          echo " RDP ACCESS DETAILS"
+          echo "===================="
+          echo "IP:      $TAILSCALE_IP"
+          echo "User:    $RDP_USER"
+          echo "Pass:    $RDP_PASS"
+          echo "===================="
+
+      - name: Keep Runner Alive
+        run: |
+          while true; do
+            echo "[$(date)] RDP Active..."
+            sleep 300
+          done
