@@ -1,4 +1,4 @@
-name: RDP-Ubuntu
+name: Ubuntu-RDP
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ on:
         type: string
 
 jobs:
-  ubuntu-rdp:
+  rdp:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
 
@@ -25,15 +25,16 @@ jobs:
       - name: Update System
         run: |
           sudo apt update -y
+          sudo apt install -y dbus-x11
 
       - name: Create RDP User
         run: |
           USERNAME="${{ github.event.inputs.rdp_username }}"
           PASSWORD="${{ github.event.inputs.rdp_password }}"
 
-          sudo useradd -m -s /bin/bash $USERNAME
+          sudo useradd -m -s /bin/bash "$USERNAME"
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
-          sudo usermod -aG sudo $USERNAME
+          sudo usermod -aG sudo "$USERNAME"
 
           echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
@@ -44,44 +45,56 @@ jobs:
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
 
-          sudo adduser xrdp ssl-cert
-          echo xfce4-session > ~/.xsession
+          # Fix login session
+          echo xfce4-session > /home/${{ github.event.inputs.rdp_username }}/.xsession
+          sudo chown ${{ github.event.inputs.rdp_username }}:${{ github.event.inputs.rdp_username }} \
+            /home/${{ github.event.inputs.rdp_username }}/.xsession
+
+          # Fix XRDP policy
+          sudo sed -i 's/console/anybody/g' /etc/X11/Xwrapper.config
+          echo "allowed_users=anybody" | sudo tee /etc/X11/Xwrapper.config
+
+      - name: Fix Firewall (Ubuntu runner does not use UFW but ensure open)
+        run: |
+          sudo iptables -I INPUT -p tcp --dport 3389 -j ACCEPT
 
       - name: Install Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
 
-      - name: Connect Tailscale
+      - name: Start Tailscale
         run: |
           sudo tailscale up \
-              --authkey="${{ github.event.inputs.tailscale_authkey }}" \
-              --hostname="ubuntu-runner-${GITHUB_RUN_ID}"
+            --authkey="${{ github.event.inputs.tailscale_authkey }}" \
+            --hostname="ubuntu-rdp-${GITHUB_RUN_ID}"
 
-          TS_IP=$(tailscale ip -4)
-          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+          TSIP=$(tailscale ip -4)
+          echo "TAILSCALE_IP=$TSIP" >> $GITHUB_ENV
 
-      - name: Verify RDP Port
+      - name: Confirm XRDP Running
         run: |
-          if ss -tln | grep -q ':3389'; then
-            echo "RDP running successfully"
+          if systemctl is-active --quiet xrdp; then
+            echo "XRDP running."
           else
-            echo "RDP NOT running!"
+            echo "XRDP NOT running!"
             exit 1
           fi
 
-      - name: Show RDP Details
+      - name: Confirm Tailscale IP
         run: |
-          echo ""
-          echo "===== UBUNTU RDP ACCESS ====="
-          echo "Tailscale IP : $TAILSCALE_IP"
-          echo "Username     : $RDP_USER"
-          echo "Password     : $RDP_PASS"
-          echo "================================"
-          echo ""
+          echo "Tailscale IP = $TAILSCALE_IP"
 
       - name: Keep Alive
         run: |
+          echo "============================="
+          echo "  UBUNTU RDP CONNECTION INFO "
+          echo "============================="
+          echo "IP Address : $TAILSCALE_IP"
+          echo "Username   : $RDP_USER"
+          echo "Password   : $RDP_PASS"
+          echo "============================="
+          
           while true; do
-            echo "[KEEP-ALIVE] $(date)"
+            echo "RDP Running... $(date)"
             sleep 300
           done
