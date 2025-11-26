@@ -2,6 +2,19 @@ name: RDP-Ubuntu
 
 on:
   workflow_dispatch:
+    inputs:
+      rdp_username:
+        description: "Enter RDP Username"
+        required: true
+        type: string
+      rdp_password:
+        description: "Enter RDP Password"
+        required: true
+        type: string
+      tailscale_authkey:
+        description: "Enter Tailscale Auth Key"
+        required: true
+        type: string
 
 jobs:
   ubuntu-rdp:
@@ -12,62 +25,63 @@ jobs:
       - name: Update System
         run: |
           sudo apt update -y
-          sudo apt upgrade -y
 
-      - name: Install Desktop Environment (XFCE)
+      - name: Create RDP User
         run: |
-          sudo apt install xfce4 xfce4-goodies -y
+          USERNAME="${{ github.event.inputs.rdp_username }}"
+          PASSWORD="${{ github.event.inputs.rdp_password }}"
 
-      - name: Install xRDP
+          sudo useradd -m -s /bin/bash $USERNAME
+          echo "$USERNAME:$PASSWORD" | sudo chpasswd
+          sudo usermod -aG sudo $USERNAME
+
+          echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
+          echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
+
+      - name: Install Desktop + XRDP
         run: |
-          sudo apt install xrdp -y
+          sudo apt install -y xfce4 xfce4-goodies xrdp
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
 
-      - name: Allow RDP through Firewall
-        run: |
-          sudo ufw allow 3389/tcp || true
-
-      - name: Create RDP User with Secure Password
-        run: |
-          # Generate strong password
-          PASS=$(openssl rand -base64 16)
-
-          # Create user
-          sudo useradd -m rdp
-          echo "rdp:$PASS" | sudo chpasswd
-          sudo usermod -aG sudo rdp
-
-          # Save credentials
-          echo "RDP_USER=rdp" >> $GITHUB_ENV
-          echo "RDP_PASSWORD=$PASS" >> $GITHUB_ENV
+          sudo adduser xrdp ssl-cert
+          echo xfce4-session > ~/.xsession
 
       - name: Install Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
 
-      - name: Start Tailscale & Authenticate
+      - name: Connect Tailscale
         run: |
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=ubuntu-gh-runner-$GITHUB_RUN_ID
-          sleep 5
-          TSIP=$(tailscale ip -4)
-          echo "TAILSCALE_IP=$TSIP" >> $GITHUB_ENV
+          sudo tailscale up \
+              --authkey="${{ github.event.inputs.tailscale_authkey }}" \
+              --hostname="ubuntu-runner-${GITHUB_RUN_ID}"
 
-      - name: Print Connection Details
+          TS_IP=$(tailscale ip -4)
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+
+      - name: Verify RDP Port
+        run: |
+          if ss -tln | grep -q ':3389'; then
+            echo "RDP running successfully"
+          else
+            echo "RDP NOT running!"
+            exit 1
+          fi
+
+      - name: Show RDP Details
         run: |
           echo ""
-          echo "=============================="
-          echo " Ubuntu RDP Active"
-          echo " Connect using Tailscale IP:"
-          echo " IP: $TAILSCALE_IP"
-          echo " Username: $RDP_USER"
-          echo " Password: $RDP_PASSWORD"
-          echo "=============================="
+          echo "===== UBUNTU RDP ACCESS ====="
+          echo "Tailscale IP : $TAILSCALE_IP"
+          echo "Username     : $RDP_USER"
+          echo "Password     : $RDP_PASS"
+          echo "================================"
           echo ""
 
-      - name: Keep Runner Alive
+      - name: Keep Alive
         run: |
           while true; do
-            echo "[$(date)] RDP session running..."
+            echo "[KEEP-ALIVE] $(date)"
             sleep 300
           done
