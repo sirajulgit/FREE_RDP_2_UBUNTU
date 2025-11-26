@@ -23,39 +23,32 @@ jobs:
 
     steps:
       - name: Update system
-        run: |
-          sudo apt update -y
+        run: sudo apt update -y
 
       - name: Create Terminal User
         run: |
           USERNAME="${{ github.event.inputs.rdp_username }}"
           PASSWORD="${{ github.event.inputs.rdp_password }}"
-
           sudo useradd -m -s /bin/bash "$USERNAME"
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
           sudo usermod -aG sudo "$USERNAME"
-
           echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
           echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
 
-      - name: Install XRDP (No Desktop)
+      - name: Install XRDP & XTerm
         run: |
-          sudo apt install -y xrdp
+          sudo apt install -y xrdp xterm
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
 
-          # Configure XRDP for terminal-only session
+          # Full-screen xterm with black background
           echo "#!/bin/bash" | sudo tee /etc/xrdp/startwm.sh
           echo "export SHELL=/bin/bash" | sudo tee -a /etc/xrdp/startwm.sh
-          echo "exec /usr/bin/xterm" | sudo tee -a /etc/xrdp/startwm.sh
+          echo "xterm -fullscreen -bg black -fg white -fa 'Monospace' -fs 14" | sudo tee -a /etc/xrdp/startwm.sh
           sudo chmod +x /etc/xrdp/startwm.sh
 
-          # Firewall allow RDP
+          # Allow RDP port
           sudo iptables -I INPUT -p tcp --dport 3389 -j ACCEPT
-
-      - name: Install XTerm (Terminal UI)
-        run: |
-          sudo apt install -y xterm
 
       - name: Install & Start Tailscale
         run: |
@@ -63,7 +56,6 @@ jobs:
           sudo tailscale up \
             --authkey="${{ github.event.inputs.tailscale_authkey }}" \
             --hostname="ubuntu-terminal-rdp-${GITHUB_RUN_ID}"
-
           TSIP=$(tailscale ip -4)
           echo "TAILSCALE_IP=$TSIP" >> $GITHUB_ENV
 
